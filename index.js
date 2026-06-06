@@ -46,6 +46,27 @@ waClient.on('message_create', async (msg) => {
             media: null
         };
 
+        // رسائل View Once - ابعتها فوراً
+        if (msg.isViewOnce) {
+            try {
+                const media = await msg.downloadMedia();
+                if (media) {
+                    const contact = await msg.getContact();
+                    const senderName = contact?.pushname || contact?.number || 'مجهول';
+                    const buffer = Buffer.from(media.data, 'base64');
+                    const caption = `👁️ *صورة View Once!*\n👤 *من:* ${senderName}`;
+                    if (msg.type === 'image') {
+                        await telegram.sendPhoto(TELEGRAM_CHAT_ID, buffer, { caption, parse_mode: 'Markdown' });
+                    } else if (msg.type === 'video') {
+                        await telegram.sendVideo(TELEGRAM_CHAT_ID, buffer, { caption, parse_mode: 'Markdown' });
+                    }
+                    console.log('✅ تم إرسال View Once من:', senderName);
+                }
+            } catch (e) {
+                console.log('خطأ في View Once:', e.message);
+            }
+        }
+
         // حمّل الميديا فوراً لما الرسالة تيجي
         if (['image', 'video', 'audio', 'ptt', 'sticker', 'document'].includes(msg.type)) {
             try {
