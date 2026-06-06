@@ -35,18 +35,10 @@ waClient.on('ready', () => {
     telegram.sendMessage(TELEGRAM_CHAT_ID, '✅ البوت شغال! هيبعتلك الرسايل المحذوفة 🎉');
 });
 
-// احفظ كل رسالة جديدة في الكاش
-waClient.on('message_create', async (msg) => {
+// احفظ كل رسالة جديدة في الكاش + ابعت View Once فوراً
+waClient.on('message', async (msg) => {
     try {
-        const cached = { 
-            body: msg.body, 
-            type: msg.type,
-            from: msg.from,
-            timestamp: msg.timestamp,
-            media: null
-        };
-
-        // رسائل View Once - ابعتها فوراً
+        // View Once - ابعتها فوراً قبل ما تتمسح
         if (msg.isViewOnce) {
             try {
                 const media = await msg.downloadMedia();
@@ -65,15 +57,33 @@ waClient.on('message_create', async (msg) => {
             } catch (e) {
                 console.log('خطأ في View Once:', e.message);
             }
+            return;
         }
 
-        // حمّل الميديا فوراً لما الرسالة تيجي
+        // حفظ الرسالة في الكاش
+        const cached = {
+            body: msg.body,
+            type: msg.type,
+            from: msg.from,
+            timestamp: msg.timestamp,
+            media: null,
+            senderName: '',
+            chatName: ''
+        };
+
+        // احفظ اسم المرسل والمحادثة
+        try {
+            const contact = await msg.getContact();
+            const chat = await msg.getChat();
+            cached.senderName = contact?.pushname || contact?.number || 'مجهول';
+            cached.chatName = chat?.isGroup ? chat.name : cached.senderName;
+        } catch (e) {}
+
+        // حمّل الميديا فوراً
         if (['image', 'video', 'audio', 'ptt', 'sticker', 'document'].includes(msg.type)) {
             try {
                 const media = await msg.downloadMedia();
-                if (media) {
-                    cached.media = media;
-                }
+                if (media) cached.media = media;
             } catch (e) {
                 console.log('مش قادر يحمل الميديا:', e.message);
             }
@@ -81,10 +91,10 @@ waClient.on('message_create', async (msg) => {
 
         messageCache.set(msg.id._serialized, cached);
 
-        // امسح من الكاش بعد 5 دقايق عشان متملاش الميموري
+        // امسح من الكاش بعد 10 دقايق
         setTimeout(() => {
             messageCache.delete(msg.id._serialized);
-        }, 5 * 60 * 1000);
+        }, 10 * 60 * 1000);
 
     } catch (err) {
         console.error('خطأ في حفظ الرسالة:', err.message);
@@ -94,20 +104,17 @@ waClient.on('message_create', async (msg) => {
 // لما رسالة تتمسح
 waClient.on('message_revoke_everyone', async (after, before) => {
     try {
-        // جيب الرسالة من الكاش
-        const cachedMsg = before ? messageCache.get(before.id._serialized) : null;
-        const msg = cachedMsg || before;
+        if (!before) return;
 
-        if (!msg) return;
-
-        const contact = before ? await before.getContact() : null;
-        const chat = before ? await before.getChat() : null;
-
-        const senderName = contact?.pushname || contact?.number || 'مجهول';
-        const chatName = chat?.isGroup ? chat.name : senderName;
-        const time = new Date((msg.timestamp || Date.now() / 1000) * 1000).toLocaleString('ar-EG', {
-            timeZone: 'Africa/Cairo'
-        });
+        const cachedMsg = messageCache.get(before.id._serialized);
+        
+        const senderName = cachedMsg?.senderName || 'مجهول';
+        const chatName = cachedMsg?.chatName || 'مجهول';
+        const msgType = cachedMsg?.type || before.type || 'unknown';
+        const msgBody = cachedMsg?.body || before.body || '';
+        const media = cachedMsg?.media || null;
+        const time = new Date((cachedMsg?.timestamp || before.timestamp || Date.now() / 1000) * 1000)
+            .toLocaleString('ar-EG', { timeZone: 'Africa/Cairo' });
 
         let message = `🚨 *رسالة اتمسحت!*\n\n`;
         message += `👤 *من:* ${senderName}\n`;
@@ -115,13 +122,9 @@ waClient.on('message_revoke_everyone', async (after, before) => {
         message += `🕐 *الوقت:* ${time}\n`;
         message += `━━━━━━━━━━━━━━\n`;
 
-        const msgType = msg.type || 'text';
-        const msgBody = msg.body || '';
-        const media = cachedMsg?.media || null;
-
         // نص
-        if (msgType === 'chat' || (!msgType && msgBody)) {
-            message += `📝 *الرسالة:*\n${msgBody}`;
+        if (msgType === 'chat' || msgType === 'text' || (msgBody && !media)) {
+            message += `📝 *الرسالة:*\n${msgBody || '(نص فاضي)'}`;
             await telegram.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'Markdown' });
         }
 
@@ -130,11 +133,9 @@ waClient.on('message_revoke_everyone', async (after, before) => {
             message += `🖼️ *نوع الرسالة:* صورة`;
             if (media) {
                 const buffer = Buffer.from(media.data, 'base64');
-                await telegram.sendPhoto(TELEGRAM_CHAT_ID, buffer, {
-                    caption: message, parse_mode: 'Markdown'
-                });
+                await telegram.sendPhoto(TELEGRAM_CHAT_ID, buffer, { caption: message, parse_mode: 'Markdown' });
             } else {
-                await telegram.sendMessage(TELEGRAM_CHAT_ID, message + '\n_(الصورة اتمسحت قبل ما يقدر يحملها)_', { parse_mode: 'Markdown' });
+                await telegram.sendMessage(TELEGRAM_CHAT_ID, message + '\n_(الصورة اتمسحت بسرعة)_', { parse_mode: 'Markdown' });
             }
         }
 
@@ -143,24 +144,20 @@ waClient.on('message_revoke_everyone', async (after, before) => {
             message += `🎥 *نوع الرسالة:* فيديو`;
             if (media) {
                 const buffer = Buffer.from(media.data, 'base64');
-                await telegram.sendVideo(TELEGRAM_CHAT_ID, buffer, {
-                    caption: message, parse_mode: 'Markdown'
-                });
+                await telegram.sendVideo(TELEGRAM_CHAT_ID, buffer, { caption: message, parse_mode: 'Markdown' });
             } else {
-                await telegram.sendMessage(TELEGRAM_CHAT_ID, message + '\n_(الفيديو اتمسح قبل ما يقدر يحمله)_', { parse_mode: 'Markdown' });
+                await telegram.sendMessage(TELEGRAM_CHAT_ID, message + '\n_(الفيديو اتمسح بسرعة)_', { parse_mode: 'Markdown' });
             }
         }
 
-        // رسالة صوتية
+        // صوت / رسالة صوتية
         else if (msgType === 'audio' || msgType === 'ptt') {
             message += `🎵 *نوع الرسالة:* رسالة صوتية`;
             if (media) {
                 const buffer = Buffer.from(media.data, 'base64');
-                await telegram.sendAudio(TELEGRAM_CHAT_ID, buffer, {
-                    caption: message, parse_mode: 'Markdown'
-                });
+                await telegram.sendVoice(TELEGRAM_CHAT_ID, buffer, { caption: message, parse_mode: 'Markdown' });
             } else {
-                await telegram.sendMessage(TELEGRAM_CHAT_ID, message + '\n_(الصوت اتمسح قبل ما يقدر يحمله)_', { parse_mode: 'Markdown' });
+                await telegram.sendMessage(TELEGRAM_CHAT_ID, message + '\n_(الصوت اتمسح بسرعة)_', { parse_mode: 'Markdown' });
             }
         }
 
@@ -172,7 +169,7 @@ waClient.on('message_revoke_everyone', async (after, before) => {
                 await telegram.sendSticker(TELEGRAM_CHAT_ID, buffer);
                 await telegram.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'Markdown' });
             } else {
-                await telegram.sendMessage(TELEGRAM_CHAT_ID, message + '\n_(الستيكر اتمسح قبل ما يقدر يحمله)_', { parse_mode: 'Markdown' });
+                await telegram.sendMessage(TELEGRAM_CHAT_ID, message + '\n_(الستيكر اتمسح بسرعة)_', { parse_mode: 'Markdown' });
             }
         }
 
@@ -181,16 +178,14 @@ waClient.on('message_revoke_everyone', async (after, before) => {
             message += `📎 *نوع الرسالة:* ملف`;
             if (media) {
                 const buffer = Buffer.from(media.data, 'base64');
-                await telegram.sendDocument(TELEGRAM_CHAT_ID, buffer, {
-                    caption: message, parse_mode: 'Markdown'
-                });
+                await telegram.sendDocument(TELEGRAM_CHAT_ID, buffer, { caption: message, parse_mode: 'Markdown' });
             } else {
                 await telegram.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'Markdown' });
             }
         }
 
         else {
-            message += `❓ *نوع الرسالة:* ${msgType}`;
+            message += `❓ *نوع:* ${msgType}\n${msgBody ? `📝 ${msgBody}` : ''}`;
             await telegram.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'Markdown' });
         }
 
