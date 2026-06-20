@@ -2,8 +2,8 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const TelegramBot = require('node-telegram-bot-api');
 const qrcode = require('qrcode-terminal');
 
-const TELEGRAM_TOKEN = ' 8940409345:AAFg6X8DwF4vV1oqWTSQWiYP5AdQkQFKJYY';
-const TELEGRAM_CHAT_ID = '6449354618';
+const TELEGRAM_TOKEN = '8940409345:AAFg6X8DwF4vV1oqWTSQWiYP5AdQkQFKJYY';
+const TELEGRAM_CHAT_ID = '8940409345';
 
 const telegram = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 const messageCache = new Map();
